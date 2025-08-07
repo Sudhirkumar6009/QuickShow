@@ -1,3 +1,13 @@
+# Environment variables
+.env
 server/.env
-client/.env"server/.env" 
-".env" 
+client/.env
+
+# Node modules
+node_modules/
+server/node_modules/
+client/node_modules/
+
+# Build directories
+build/
+dist/

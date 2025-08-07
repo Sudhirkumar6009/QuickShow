@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const movieSchema = new mongoose.Schema(
     {
-        _id: {type: String, required: true}, // This is fine as TMDB IDs
+        _id: {type: String, required: true}, // TMDB movie ID
         title: {type: String, required: true},
         overview: {type: String, required: true},
         poster_path: {type: String, required: true},
@@ -17,7 +17,7 @@ const movieSchema = new mongoose.Schema(
     }, 
     { 
         timestamps: true,
-        _id: false // Add this to allow custom _id field
+        _id: false 
     }
 )
 

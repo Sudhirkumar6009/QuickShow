@@ -35,31 +35,45 @@ export const AppProvider = ({ children })=>{
         }
     }
 
-    // Fix the fetchShows function
+    // Add this function to your context
+    const fetchDirectMovies = async () => {
+        try {
+            const { data } = await axios.get('/api/show/direct-movies');
+            if (data.success && Array.isArray(data.shows) && data.shows.length > 0) {
+                setShows(data.shows);
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error("Error fetching direct movies:", error);
+            return false;
+        }
+    };
+
+    // Update the fetchShows function
     const fetchShows = async () => {
         try {
             console.log("Fetching shows from client...");
             const { data } = await axios.get('/api/show/all');
-            console.log("API response:", data);
             
-            if(data.success){
-                // Make sure we're setting proper movie objects
-                if (Array.isArray(data.shows) && data.shows.length > 0) {
-                    setShows(data.shows);
-                    console.log(`Set ${data.shows.length} shows in state`);
-                } else {
-                    console.log("No shows returned from API");
-                    setShows([]);
-                }
+            if(data.success && Array.isArray(data.shows) && data.shows.length > 0) {
+                setShows(data.shows);
+                console.log(`Set ${data.shows.length} shows in state`);
             } else {
-                toast.error(data.message || "Failed to fetch shows");
-                console.error("API returned error:", data.message);
+                console.log("No shows from main API, trying direct movies");
+                const gotDirectMovies = await fetchDirectMovies();
+                
+                if (!gotDirectMovies) {
+                    console.log("Falling back to dummy data");
+                    // If no shows, use dummy data temporarily for testing
+                    const { dummyShowsData } = await import('../assets/assets');
+                    setShows(dummyShowsData);
+                    console.log("Using dummy data as fallback");
+                }
             }
         } catch (error) {
             console.error("Error fetching shows:", error);
-            // If API is failing, try loading from dummy data temporarily
-            // import { dummyShowsData } from '../assets/assets';
-            // setShows(dummyShowsData);
+            await fetchDirectMovies();
         }
     }
 

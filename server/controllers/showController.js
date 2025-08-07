@@ -95,18 +95,59 @@ export const getShows = async (req, res) =>{
         const shows = await Show.find({showDateTime: {$gte: new Date()}}).populate('movie').sort({ showDateTime: 1 });
         console.log(`Found ${shows.length} shows`);
         
-        // Log the first show to debug
-        if (shows.length > 0) {
-            console.log("First show:", JSON.stringify(shows[0], null, 2));
-        } else {
-            console.log("No shows found in database");
+        // If shows with valid movies exist, return them
+        if (shows.length > 0 && shows[0].movie) {
+            // Filter unique shows
+            const uniqueShows = new Set(shows.map(show => show.movie));
+            console.log(`Unique movies: ${uniqueShows.size}`);
+            return res.json({success: true, shows: Array.from(uniqueShows)});
+        } 
+        
+        // FALLBACK: Directly fetch from TMDB if no shows in database
+        console.log("No shows found, fetching from TMDB API");
+        const { data } = await axios.get('https://api.themoviedb.org/3/movie/now_playing', {
+            headers: {Authorization: `Bearer ${process.env.TMDB_API_KEY}`}
+        });
+        
+        if (!data.results || data.results.length === 0) {
+            return res.json({success: true, shows: []});
         }
-
-        // filter unique shows
-        const uniqueShows = new Set(shows.map(show => show.movie))
-        console.log(`Unique movies: ${uniqueShows.size}`);
-
-        res.json({success: true, shows: Array.from(uniqueShows)})
+        
+        // Get details for each movie
+        const moviePromises = data.results.slice(0, 8).map(async (movie) => {
+            try {
+                const [detailsRes, creditsRes] = await Promise.all([
+                    axios.get(`https://api.themoviedb.org/3/movie/${movie.id}`, {
+                        headers: {Authorization: `Bearer ${process.env.TMDB_API_KEY}`}
+                    }),
+                    axios.get(`https://api.themoviedb.org/3/movie/${movie.id}/credits`, {
+                        headers: {Authorization: `Bearer ${process.env.TMDB_API_KEY}`}
+                    })
+                ]);
+                
+                return {
+                    _id: movie.id.toString(),
+                    title: movie.title,
+                    overview: movie.overview,
+                    poster_path: movie.poster_path,
+                    backdrop_path: movie.backdrop_path,
+                    release_date: movie.release_date,
+                    original_language: movie.original_language,
+                    tagline: detailsRes.data.tagline || "",
+                    genres: detailsRes.data.genres || [],
+                    casts: creditsRes.data.cast?.slice(0, 10) || [],
+                    vote_average: movie.vote_average || 0,
+                    runtime: detailsRes.data.runtime || 120,
+                };
+            } catch (error) {
+                console.error(`Error fetching details for movie ${movie.id}:`, error.message);
+                return null;
+            }
+        });
+        
+        const movieDetails = (await Promise.all(moviePromises)).filter(Boolean);
+        return res.json({success: true, shows: movieDetails});
+        
     } catch (error) {
         console.error("Error in getShows:", error);
         res.json({ success: false, message: error.message });
@@ -117,21 +158,76 @@ export const getShows = async (req, res) =>{
 export const getShow = async (req, res) =>{
     try {
         const {movieId} = req.params;
-        // get all upcoming shows for the movie
-        const shows = await Show.find({movie: movieId, showDateTime: { $gte: new Date() }})
-
+        
+        // First check if the movie exists
         const movie = await Movie.findById(movieId);
+        
+        if (!movie) {
+            console.log(`Movie with id ${movieId} not found, fetching from TMDB`);
+            
+            try {
+                // Fetch movie details and credits from TMDB API as fallback
+                const [movieDetailsResponse, movieCreditsResponse] = await Promise.all([
+                    axios.get(`https://api.themoviedb.org/3/movie/${movieId}`, {
+                        headers: {Authorization : `Bearer ${process.env.TMDB_API_KEY}`} 
+                    }),
+                    axios.get(`https://api.themoviedb.org/3/movie/${movieId}/credits`, {
+                        headers: {Authorization : `Bearer ${process.env.TMDB_API_KEY}`} 
+                    })
+                ]);
+                
+                const movieApiData = movieDetailsResponse.data;
+                const movieCreditsData = movieCreditsResponse.data;
+                
+                const movieDetails = {
+                    _id: movieId,
+                    title: movieApiData.title,
+                    overview: movieApiData.overview,
+                    poster_path: movieApiData.poster_path,
+                    backdrop_path: movieApiData.backdrop_path,
+                    genres: movieApiData.genres,
+                    casts: movieCreditsData.cast,
+                    release_date: movieApiData.release_date,
+                    original_language: movieApiData.original_language,
+                    tagline: movieApiData.tagline || "",
+                    vote_average: movieApiData.vote_average,
+                    runtime: movieApiData.runtime,
+                };
+                
+                // get all upcoming shows for the movie
+                const shows = await Show.find({movie: movieId, showDateTime: { $gte: new Date() }});
+                
+                const dateTime = {};
+                
+                shows.forEach((show) => {
+                    const date = show.showDateTime.toISOString().split("T")[0];
+                    if(!dateTime[date]){
+                        dateTime[date] = [];
+                    }
+                    dateTime[date].push({ time: show.showDateTime, showId: show._id });
+                });
+                
+                return res.json({success: true, movie: movieDetails, dateTime});
+            } catch (error) {
+                console.error(`Error fetching movie ${movieId} from TMDB:`, error.message);
+                return res.json({ success: false, message: "Movie not found" });
+            }
+        }
+        
+        // get all upcoming shows for the movie
+        const shows = await Show.find({movie: movieId, showDateTime: { $gte: new Date() }});
+        
         const dateTime = {};
-
+        
         shows.forEach((show) => {
             const date = show.showDateTime.toISOString().split("T")[0];
             if(!dateTime[date]){
-                dateTime[date] = []
+                dateTime[date] = [];
             }
-            dateTime[date].push({ time: show.showDateTime, showId: show._id })
-        })
-
-        res.json({success: true, movie, dateTime})
+            dateTime[date].push({ time: show.showDateTime, showId: show._id });
+        });
+        
+        res.json({success: true, movie, dateTime});
     } catch (error) {
         console.error(error);
         res.json({ success: false, message: error.message });
@@ -187,5 +283,39 @@ export const addTestMovie = async (req, res) => {
     } catch (error) {
         console.error("Error adding test data:", error);
         res.json({ success: false, message: error.message });
+    }
+}
+
+// Add this function
+export const getDirectMovies = async (req, res) => {
+    try {
+        const { data } = await axios.get('https://api.themoviedb.org/3/movie/popular', {
+            headers: {Authorization: `Bearer ${process.env.TMDB_API_KEY}`}
+        });
+        
+        if (!data.results) {
+            return res.json({success: false, message: "Failed to fetch movies from TMDB"});
+        }
+        
+        const movies = data.results.map(movie => ({
+            _id: movie.id.toString(),
+            title: movie.title,
+            overview: movie.overview,
+            poster_path: movie.poster_path,
+            backdrop_path: movie.backdrop_path,
+            release_date: movie.release_date,
+            original_language: movie.original_language,
+            vote_average: movie.vote_average,
+            // Placeholder values for required fields
+            tagline: "",
+            genres: movie.genre_ids.map(id => ({ id, name: "Genre" })),
+            casts: [],
+            runtime: 120
+        }));
+        
+        res.json({success: true, shows: movies});
+    } catch (error) {
+        console.error("Error fetching direct movies:", error);
+        res.json({success: false, message: error.message});
     }
 };

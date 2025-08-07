@@ -1,2 +1,0 @@
-"# QuickShow" 
-"# QuickShow" 
